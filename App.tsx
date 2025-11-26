@@ -1,10 +1,9 @@
-
 import React, { useState, useRef, useEffect } from 'react';
 import { toPng } from 'html-to-image';
 import { 
   Upload, Type as TypeIcon, Smile, Layout, Download, 
   Trash2, Image as ImageIcon, Palette,
-  RotateCcw, ZoomIn, ZoomOut, AlignLeft, AlignCenter, AlignRight, Bold
+  RotateCcw, ZoomIn, ZoomOut, AlignLeft, AlignCenter, AlignRight, Bold, X as XIcon
 } from 'lucide-react';
 import clsx from 'clsx';
 import { v4 as uuidv4 } from 'uuid';
@@ -73,22 +72,27 @@ export default function App() {
           const height = img.naturalHeight;
           
           setOriginalSize({ width, height });
-          setAspectRatio({
-            name: 'original',
-            width: width,
-            height: height,
-            label: '原图',
-            icon: 'image'
-          });
+          // If it's the first upload OR if currently using original aspect ratio, update it
+          if (!image || aspectRatio.name === 'original') {
+             setAspectRatio({
+              name: 'original',
+              width: width,
+              height: height,
+              label: '原图',
+              icon: 'image'
+            });
+          }
           
           setImage(result);
-          setLayers([]);
+          // If replacing image, we might want to keep layers, but reset bg config
           setBgConfig(INITIAL_BG_CONFIG);
         };
         img.src = result;
       };
       reader.readAsDataURL(e.target.files[0]);
     }
+    // Reset input value to allow re-uploading same file
+    if (e.target) e.target.value = '';
   };
 
   const addTextLayer = () => {
@@ -158,34 +162,60 @@ export default function App() {
     setSelectedLayerId(null); // Deselect for clean capture
 
     try {
-      // Force reset transform to none to capture full resolution
-      // We use the 'style' option of toPng to override the current scale transform
-      setTimeout(async () => {
-         const dataUrl = await toPng(workspaceRef.current!, { 
-           cacheBust: true, 
-           pixelRatio: 1, // 1:1 pixel ratio
-           width: aspectRatio.width,
-           height: aspectRatio.height,
-           canvasWidth: aspectRatio.width, // Force exact output width
-           canvasHeight: aspectRatio.height, // Force exact output height
-           style: {
-             transform: 'none', // Critical: Ignore the viewport zoom
-             transformOrigin: 'top left'
-           }
-         });
-         
-         const link = document.createElement('a');
-         link.download = `tuling-design-${Date.now()}.png`;
-         link.href = dataUrl;
-         link.click();
-         setIsExporting(false);
-         setSelectedLayerId(originalSelection);
-      }, 100);
+      // Small delay to ensure React renders the deselected state
+      await new Promise(resolve => setTimeout(resolve, 50));
+
+      const commonConfig = {
+        skipAutoScale: true, // Optimization since we set dimensions manually
+        pixelRatio: 1, // 1:1 pixel ratio
+        width: aspectRatio.width,
+        height: aspectRatio.height,
+        canvasWidth: aspectRatio.width, // Force exact output width
+        canvasHeight: aspectRatio.height, // Force exact output height
+        style: {
+          transform: 'none', // Critical: Ignore the viewport zoom
+          transformOrigin: 'top left'
+        },
+        // Ensure CORS requests are made for external resources (like Fonts)
+        fetchRequestInit: {
+            mode: 'cors' as RequestMode,
+            credentials: 'omit' as RequestCredentials,
+        }
+      };
+
+      let dataUrl;
+      try {
+          // Attempt 1: Fast (No Cache Busting)
+          // This uses cached resources if available.
+          dataUrl = await toPng(workspaceRef.current!, { 
+              ...commonConfig,
+              cacheBust: false, 
+          });
+      } catch (error) {
+          console.warn("Fast export failed or had CORS issues, retrying with cacheBust...", error);
+          // Attempt 2: Retry with Cache Busting
+          // This forces a re-fetch of resources, often fixing "cssRules" access errors
+          // by ensuring the new request respects crossorigin attributes.
+          dataUrl = await toPng(workspaceRef.current!, { 
+              ...commonConfig,
+              cacheBust: true, 
+          });
+      }
+      
+      if (dataUrl) {
+          const link = document.createElement('a');
+          link.download = `tuling-design-${Date.now()}.png`;
+          link.href = dataUrl;
+          link.click();
+      } else {
+          throw new Error("Failed to generate image data");
+      }
     } catch (err) {
       console.error('Export failed', err);
+      alert("导出失败，请重试");
+    } finally {
       setIsExporting(false);
       setSelectedLayerId(originalSelection);
-      alert("导出失败，请重试");
     }
   };
 
@@ -219,23 +249,51 @@ export default function App() {
   return (
     <div className="flex flex-col h-screen bg-[#111827] text-white overflow-hidden font-sans">
       
+      {/* Persistent File Input for Upload/Replace */}
+      <input 
+        ref={fileInputRef} 
+        type="file" 
+        accept="image/*" 
+        onChange={handleImageUpload} 
+        className="hidden" 
+      />
+
       {/* Header */}
       <Header 
         onReset={() => { setImage(null); setLayers([]); setOriginalSize(null); }} 
-        onExport={handleExport} 
-        isExporting={isExporting}
         hasImage={!!image}
       />
 
       {/* Main Workspace */}
       <div className="flex-1 flex overflow-hidden">
         
-        {/* Left Toolbar (Add Content) */}
-        <div className="w-16 md:w-20 bg-[#1f2937] border-r border-gray-700 flex flex-col items-center py-4 gap-4 z-20 shadow-lg">
-           <ToolButton active={leftTab === 'layout'} onClick={() => { setLeftTab('layout'); setSelectedLayerId(null); }} icon={<Layout size={20} />} label="布局" />
-           <ToolButton active={leftTab === 'filter'} onClick={() => { setLeftTab('filter'); setSelectedLayerId(null); }} icon={<Palette size={20} />} label="滤镜" />
-           <ToolButton active={leftTab === 'text'} onClick={() => { setLeftTab('text'); }} icon={<TypeIcon size={20} />} label="文字" />
-           <ToolButton active={leftTab === 'sticker'} onClick={() => { setLeftTab('sticker'); }} icon={<Smile size={20} />} label="贴纸" />
+        {/* Left Toolbar (Sidebar) */}
+        <div className="w-16 md:w-20 bg-[#1f2937] border-r border-gray-700 flex flex-col items-center py-4 z-20 shadow-lg justify-between h-full">
+           
+           {/* Top Tools */}
+           <div className="flex flex-col items-center gap-4 w-full">
+              <ToolButton active={leftTab === 'layout'} onClick={() => { setLeftTab('layout'); setSelectedLayerId(null); }} icon={<Layout size={20} />} label="布局" />
+              <ToolButton active={leftTab === 'filter'} onClick={() => { setLeftTab('filter'); setSelectedLayerId(null); }} icon={<Palette size={20} />} label="滤镜" />
+              <ToolButton active={leftTab === 'text'} onClick={() => { setLeftTab('text'); }} icon={<TypeIcon size={20} />} label="文字" />
+              <ToolButton active={leftTab === 'sticker'} onClick={() => { setLeftTab('sticker'); }} icon={<Smile size={20} />} label="贴纸" />
+           </div>
+
+           {/* Bottom Actions */}
+           <div className="flex flex-col items-center gap-4 w-full mb-2">
+              <ActionButton 
+                onClick={() => fileInputRef.current?.click()} 
+                icon={<ImageIcon size={20} />} 
+                label="换图" 
+                colorClass="bg-blue-100 text-blue-600 hover:bg-blue-200"
+              />
+              <ActionButton 
+                onClick={handleExport} 
+                icon={isExporting ? <div className="w-5 h-5 border-2 border-green-600 border-t-transparent rounded-full animate-spin"></div> : <Download size={20} />} 
+                label="导出" 
+                disabled={!image || isExporting}
+                colorClass="bg-green-100 text-green-600 hover:bg-green-200 disabled:opacity-50 disabled:cursor-not-allowed"
+              />
+           </div>
         </div>
 
         {/* Left Panel Content (Drawer) */}
@@ -380,7 +438,6 @@ export default function App() {
                   </div>
                   <h3 className="text-xl font-bold text-white mb-2">点击上传图片</h3>
                   <p className="text-sm text-gray-400">支持 JPG, PNG, WebP</p>
-                  <input ref={fileInputRef} type="file" accept="image/*" onChange={handleImageUpload} className="hidden" />
                </div>
            ) : (
                // Active Workspace
@@ -476,7 +533,7 @@ export default function App() {
 
 // --- Sub Components ---
 
-const Header = ({ onReset, onExport, isExporting, hasImage }: any) => (
+const Header = ({ onReset, hasImage }: any) => (
   <header className="h-16 bg-[#1f2937] border-b border-gray-700 flex items-center justify-between px-6 z-30 shadow-md">
     <div className="flex items-center gap-3 font-bold text-xl tracking-tight">
        <div className="w-9 h-9 rounded-xl bg-gradient-to-br from-primary to-purple-600 flex items-center justify-center shadow-lg shadow-primary/25">
@@ -490,13 +547,6 @@ const Header = ({ onReset, onExport, isExporting, hasImage }: any) => (
            <RotateCcw size={16} /> 重置
         </button>
       )}
-      <button 
-        onClick={onExport}
-        disabled={isExporting || !hasImage}
-        className="flex items-center gap-2 bg-primary hover:bg-primary/90 text-white px-6 py-2 rounded-lg font-medium transition-all shadow-lg shadow-primary/20 disabled:opacity-50 disabled:cursor-not-allowed transform hover:-translate-y-0.5 active:translate-y-0"
-      >
-        {isExporting ? '生成中...' : <><Download size={18} /> 导出图片</>}
-      </button>
     </div>
   </header>
 );
@@ -511,6 +561,20 @@ const ToolButton = ({ active, onClick, icon, label }: any) => (
   >
     {icon}
     <span className="text-[10px] font-medium">{label}</span>
+  </button>
+);
+
+const ActionButton = ({ onClick, icon, label, colorClass, disabled }: any) => (
+  <button
+    onClick={onClick}
+    disabled={disabled}
+    className={clsx(
+      "w-10 h-10 rounded-full flex items-center justify-center shadow-md transition-all duration-200",
+      colorClass
+    )}
+    title={label}
+  >
+    {icon}
   </button>
 );
 
@@ -655,7 +719,7 @@ const TextPropertiesPanel = ({ layer, onUpdate, onUpdateStyle, onDelete }: { lay
                      className={clsx("w-8 h-8 rounded border border-gray-600 flex items-center justify-center text-red-400", layer.style.backgroundColor === 'rgba(0,0,0,0)' ? 'bg-gray-700' : '')}
                      title="清除背景"
                    >
-                     <X size={14} />
+                     <XIcon size={14} />
                    </button>
                    <input 
                      type="color" 
@@ -715,6 +779,3 @@ const StyleBtn = ({ active, onClick, icon }: any) => (
     {icon}
   </button>
 );
-const X = ({size}:{size:number}) => (
-    <svg xmlns="http://www.w3.org/2000/svg" width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M18 6 6 18"/><path d="m6 6 18 18"/></svg>
-)
