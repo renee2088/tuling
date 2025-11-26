@@ -3,8 +3,8 @@ import React, { useState, useRef, useEffect } from 'react';
 import { toPng } from 'html-to-image';
 import { 
   Upload, Type as TypeIcon, Smile, Layout, Download, 
-  Trash2, Image as ImageIcon, Wand2, Palette,
-  RotateCcw, ZoomIn, ZoomOut, AlignLeft, AlignCenter, AlignRight, Bold, Move
+  Trash2, Image as ImageIcon, Palette,
+  RotateCcw, ZoomIn, ZoomOut, AlignLeft, AlignCenter, AlignRight, Bold
 } from 'lucide-react';
 import clsx from 'clsx';
 import { v4 as uuidv4 } from 'uuid';
@@ -12,7 +12,6 @@ import { v4 as uuidv4 } from 'uuid';
 import { Layer, LayerType, AspectRatio, FontStyle, BackgroundConfig } from './types';
 import { ASPECT_RATIOS, FILTERS, FONTS, STICKERS } from './constants';
 import { LayerComponent } from './components/LayerComponent';
-import { generateCaption } from './services/geminiService';
 
 const INITIAL_TEXT_STYLE: FontStyle = {
   fontFamily: '"Noto Sans SC", sans-serif',
@@ -39,6 +38,7 @@ export default function App() {
   const [layers, setLayers] = useState<Layer[]>([]);
   const [selectedLayerId, setSelectedLayerId] = useState<string | null>(null);
   const [aspectRatio, setAspectRatio] = useState<AspectRatio>(ASPECT_RATIOS[0]);
+  const [originalSize, setOriginalSize] = useState<{ width: number; height: number } | null>(null);
   
   // Tabs for Left Panel
   const [leftTab, setLeftTab] = useState<'layout' | 'filter' | 'text' | 'sticker'>('layout');
@@ -48,7 +48,6 @@ export default function App() {
 
   // UI State
   const [isExporting, setIsExporting] = useState(false);
-  const [isGeminiLoading, setIsGeminiLoading] = useState(false);
   const [canvasScale, setCanvasScale] = useState(0.6); // Viewport zoom
 
   // Refs
@@ -65,34 +64,41 @@ export default function App() {
     if (e.target.files && e.target.files[0]) {
       const reader = new FileReader();
       reader.onload = (event) => {
-        setImage(event.target?.result as string);
-        setLayers([]);
-        setBgConfig(INITIAL_BG_CONFIG);
-        // Do not force tab switch, let user stay where they are or default?
-        // Staying in current tab is fine.
+        const result = event.target?.result as string;
+        
+        // Load image to get natural dimensions
+        const img = new Image();
+        img.onload = () => {
+          const width = img.naturalWidth;
+          const height = img.naturalHeight;
+          
+          setOriginalSize({ width, height });
+          setAspectRatio({
+            name: 'original',
+            width: width,
+            height: height,
+            label: '原图',
+            icon: 'image'
+          });
+          
+          setImage(result);
+          setLayers([]);
+          setBgConfig(INITIAL_BG_CONFIG);
+        };
+        img.src = result;
       };
       reader.readAsDataURL(e.target.files[0]);
     }
   };
 
-  const addTextLayer = async (isAI: boolean = false) => {
+  const addTextLayer = () => {
     if (!image) {
         alert("请先上传图片");
         return;
     }
 
-    let content = "双击编辑文本";
+    const content = "双击编辑文本";
     
-    if (isAI) {
-      if (!process.env.API_KEY) {
-         alert("AI 功能需要 API Key。请检查配置。");
-         return;
-      }
-      setIsGeminiLoading(true);
-      content = await generateCaption();
-      setIsGeminiLoading(false);
-    }
-
     const newLayer: Layer = {
       id: uuidv4(),
       type: LayerType.TEXT,
@@ -152,8 +158,22 @@ export default function App() {
     setSelectedLayerId(null); // Deselect for clean capture
 
     try {
+      // Force reset transform to none to capture full resolution
+      // We use the 'style' option of toPng to override the current scale transform
       setTimeout(async () => {
-         const dataUrl = await toPng(workspaceRef.current!, { cacheBust: true, pixelRatio: 2 });
+         const dataUrl = await toPng(workspaceRef.current!, { 
+           cacheBust: true, 
+           pixelRatio: 1, // 1:1 pixel ratio
+           width: aspectRatio.width,
+           height: aspectRatio.height,
+           canvasWidth: aspectRatio.width, // Force exact output width
+           canvasHeight: aspectRatio.height, // Force exact output height
+           style: {
+             transform: 'none', // Critical: Ignore the viewport zoom
+             transformOrigin: 'top left'
+           }
+         });
+         
          const link = document.createElement('a');
          link.download = `tuling-design-${Date.now()}.png`;
          link.href = dataUrl;
@@ -201,7 +221,7 @@ export default function App() {
       
       {/* Header */}
       <Header 
-        onReset={() => { setImage(null); setLayers([]); }} 
+        onReset={() => { setImage(null); setLayers([]); setOriginalSize(null); }} 
         onExport={handleExport} 
         isExporting={isExporting}
         hasImage={!!image}
@@ -224,6 +244,31 @@ export default function App() {
              <div className="p-4 space-y-6">
                <h3 className="font-bold text-gray-300 flex items-center gap-2"><Layout size={16}/> 画布尺寸</h3>
                <div className="grid grid-cols-2 gap-3">
+                 {/* Original Size Option - Only if image loaded */}
+                 {originalSize && (
+                   <button
+                     onClick={() => setAspectRatio({
+                        name: 'original',
+                        width: originalSize.width,
+                        height: originalSize.height,
+                        label: '原图',
+                        icon: 'image'
+                     })}
+                     className={clsx(
+                       "flex flex-col items-center gap-2 p-3 rounded-lg border-2 transition-all",
+                       aspectRatio.name === 'original'
+                         ? "border-primary bg-primary/20 text-primary" 
+                         : "border-gray-600 bg-gray-700/50 hover:border-gray-500"
+                     )}
+                   >
+                     <div className={clsx("border-2 rounded-sm transition-colors flex items-center justify-center bg-gray-600", aspectRatio.name === 'original' ? "border-primary" : "border-gray-400")} 
+                          style={{ width: 20, height: 20 }}>
+                          <span className="text-[10px]">1:1</span>
+                     </div>
+                     <span className="text-xs">原图尺寸</span>
+                   </button>
+                 )}
+
                  {ASPECT_RATIOS.map(ratio => (
                    <button
                      key={ratio.name}
@@ -287,19 +332,12 @@ export default function App() {
              <div className="p-4 space-y-4">
                <h3 className="font-bold text-gray-300 flex items-center gap-2"><TypeIcon size={16}/> 添加文字</h3>
                <button 
-                 onClick={() => addTextLayer(false)}
-                 className="w-full bg-gray-700 hover:bg-gray-600 p-3 rounded-lg flex items-center justify-center gap-2 transition-colors"
+                 onClick={addTextLayer}
+                 className="w-full bg-gradient-to-r from-[#6366f1] to-[#a855f7] hover:from-[#4f46e5] hover:to-[#9333ea] text-white p-3 rounded-lg flex items-center justify-center gap-2 transition-all shadow-lg transform hover:-translate-y-0.5"
                >
                  <TypeIcon size={18} /> 普通文本
                </button>
-               <button 
-                 onClick={() => addTextLayer(true)}
-                 disabled={isGeminiLoading}
-                 className="w-full bg-gradient-to-r from-primary to-secondary p-3 rounded-lg flex items-center justify-center gap-2 transition-all disabled:opacity-50 hover:brightness-110"
-               >
-                 {isGeminiLoading ? <div className="animate-spin w-4 h-4 border-2 border-white/50 border-t-white rounded-full"/> : <Wand2 size={18} />}
-                 AI 智能文案
-               </button>
+               
                <div className="text-xs text-gray-500 mt-4 leading-relaxed">
                  {!image ? "请先上传图片，然后点击按钮添加文本。" : "点击上方按钮添加文本图层。选中图层后，在右侧面板编辑内容和样式。"}
                </div>
