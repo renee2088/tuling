@@ -1,0 +1,5 @@
+{
+  "name": "图灵智绘 (ImgGenius)",
+  "description": "一款全中文的一键智能图片排版工具，支持自由裁剪、多图层编辑、智能滤镜及多尺寸导出。",
+  "requestFramePermissions": []
+}
