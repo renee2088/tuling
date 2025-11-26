@@ -31,6 +31,8 @@ const INITIAL_BG_CONFIG: BackgroundConfig = {
   filter: 'none',
 };
 
+const GOOGLE_FONTS_URL = 'https://fonts.googleapis.com/css2?family=Noto+Sans+SC:wght@400;500;700;900&family=Ma+Shan+Zheng&family=Zcool+KuaiLe&family=Long+Cang&display=swap';
+
 export default function App() {
   // --- State ---
   const [image, setImage] = useState<string | null>(null);
@@ -53,6 +55,24 @@ export default function App() {
   const workspaceRef = useRef<HTMLDivElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  
+  // Cache for Font CSS to speed up export
+  const fontCssRef = useRef<string>('');
+
+  // --- Effects ---
+  
+  // Pre-fetch Font CSS on mount to make export instant
+  useEffect(() => {
+    fetch(GOOGLE_FONTS_URL)
+      .then(res => {
+        if (res.ok) return res.text();
+        throw new Error('Network response was not ok.');
+      })
+      .then(css => {
+        fontCssRef.current = css;
+      })
+      .catch(e => console.warn('Background font fetch failed (will retry on export if needed):', e));
+  }, []);
 
   // --- Computed ---
   const selectedLayer = layers.find(l => l.id === selectedLayerId);
@@ -162,8 +182,8 @@ export default function App() {
     setSelectedLayerId(null); // Deselect for clean capture
 
     try {
-      // Small delay to ensure React renders the deselected state
-      await new Promise(resolve => setTimeout(resolve, 50));
+      // Tiny delay to ensure React renders the deselected state (flushing sync updates)
+      await new Promise(resolve => setTimeout(resolve, 10));
 
       const commonConfig = {
         skipAutoScale: true, // Optimization since we set dimensions manually
@@ -172,11 +192,12 @@ export default function App() {
         height: aspectRatio.height,
         canvasWidth: aspectRatio.width, // Force exact output width
         canvasHeight: aspectRatio.height, // Force exact output height
+        fontEmbedCSS: fontCssRef.current, // Use pre-fetched CSS
         style: {
           transform: 'none', // Critical: Ignore the viewport zoom
           transformOrigin: 'top left'
         },
-        // Ensure CORS requests are made for external resources (like Fonts)
+        // Only fetch if necessary
         fetchRequestInit: {
             mode: 'cors' as RequestMode,
             credentials: 'omit' as RequestCredentials,
@@ -186,16 +207,13 @@ export default function App() {
       let dataUrl;
       try {
           // Attempt 1: Fast (No Cache Busting)
-          // This uses cached resources if available.
           dataUrl = await toPng(workspaceRef.current!, { 
               ...commonConfig,
               cacheBust: false, 
           });
       } catch (error) {
-          console.warn("Fast export failed or had CORS issues, retrying with cacheBust...", error);
-          // Attempt 2: Retry with Cache Busting
-          // This forces a re-fetch of resources, often fixing "cssRules" access errors
-          // by ensuring the new request respects crossorigin attributes.
+          console.warn("Fast export failed, retrying with cacheBust...", error);
+          // Attempt 2: Retry with Cache Busting (Slower fallback)
           dataUrl = await toPng(workspaceRef.current!, { 
               ...commonConfig,
               cacheBust: true, 
@@ -212,7 +230,7 @@ export default function App() {
       }
     } catch (err) {
       console.error('Export failed', err);
-      alert("导出失败，请重试");
+      alert("导出失败，请重试 (Export Failed)");
     } finally {
       setIsExporting(false);
       setSelectedLayerId(originalSelection);
