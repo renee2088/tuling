@@ -2,19 +2,18 @@
 <html lang="zh-CN">
   <head>
     <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
     <title>图灵智绘 - 智能图片排版</title>
     <script src="https://cdn.tailwindcss.com"></script>
     <link id="google-fonts" href="https://fonts.googleapis.com/css2?family=Noto+Sans+SC:wght@400;500;700;900&family=Ma+Shan+Zheng&family=Zcool+KuaiLe&family=Long+Cang&display=swap" rel="stylesheet" crossorigin="anonymous">
     <script>
       tailwind.config = {
+        darkMode: 'class',
         theme: {
           extend: {
             colors: {
               primary: '#6366f1',
               secondary: '#a855f7',
-              dark: '#0f172a',
-              surface: '#1e293b',
             },
             fontFamily: {
               sans: ['"Noto Sans SC"', 'sans-serif'],
@@ -33,33 +32,41 @@
         height: 6px;
       }
       ::-webkit-scrollbar-track {
-        background: #1e293b; 
+        background: transparent; 
       }
       ::-webkit-scrollbar-thumb {
-        background: #475569; 
+        background: #cbd5e1; 
         border-radius: 3px;
       }
+      .dark ::-webkit-scrollbar-thumb {
+        background: #475569;
+      }
       ::-webkit-scrollbar-thumb:hover {
-        background: #64748b; 
+        background: #94a3b8; 
+      }
+      .dark ::-webkit-scrollbar-thumb:hover {
+        background: #64748b;
       }
     </style>
   <script type="importmap">
 {
   "imports": {
     "html-to-image": "https://aistudiocdn.com/html-to-image@^1.11.13",
-    "react-dom/": "https://aistudiocdn.com/react-dom@^19.2.0/",
+    "react-dom/client": "https://aistudiocdn.com/react-dom@^19.2.0/client",
+    "react-dom": "https://aistudiocdn.com/react-dom@^19.2.0",
     "@google/genai": "https://aistudiocdn.com/@google/genai@^1.30.0",
     "uuid": "https://aistudiocdn.com/uuid@^13.0.0",
-    "react/": "https://aistudiocdn.com/react@^19.2.0/",
     "react": "https://aistudiocdn.com/react@^19.2.0",
     "lucide-react": "https://aistudiocdn.com/lucide-react@^0.555.0",
     "clsx": "https://aistudiocdn.com/clsx@^2.1.1",
-    "react-rnd": "https://aistudiocdn.com/react-rnd@^10.5.2"
+    "react-rnd": "https://aistudiocdn.com/react-rnd@^10.5.2",
+    "react-dom/": "https://aistudiocdn.com/react-dom@^19.2.0/",
+    "react/": "https://aistudiocdn.com/react@^19.2.0/"
   }
 }
 </script>
 </head>
-  <body class="bg-dark text-white h-screen overflow-hidden selection:bg-primary selection:text-white">
+  <body class="h-screen overflow-hidden selection:bg-primary selection:text-white">
     <div id="root"></div>
   </body>
 </html>

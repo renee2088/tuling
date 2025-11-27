@@ -3,7 +3,8 @@ import { toPng } from 'html-to-image';
 import { 
   Upload, Type as TypeIcon, Smile, Layout, Download, 
   Trash2, Image as ImageIcon, Palette,
-  RotateCcw, ZoomIn, ZoomOut, AlignLeft, AlignCenter, AlignRight, Bold, X as XIcon
+  RotateCcw, ZoomIn, ZoomOut, AlignLeft, AlignCenter, AlignRight, Bold, X as XIcon,
+  ChevronDown, Layers, Check, Sun, Moon
 } from 'lucide-react';
 import clsx from 'clsx';
 import { v4 as uuidv4 } from 'uuid';
@@ -41,27 +42,33 @@ export default function App() {
   const [aspectRatio, setAspectRatio] = useState<AspectRatio>(ASPECT_RATIOS[0]);
   const [originalSize, setOriginalSize] = useState<{ width: number; height: number } | null>(null);
   
-  // Tabs for Left Panel
-  const [leftTab, setLeftTab] = useState<'layout' | 'filter' | 'text' | 'sticker'>('layout');
+  // Tabs
+  const [activeTab, setActiveTab] = useState<'layout' | 'filter' | 'text' | 'sticker' | null>('layout');
   
   // Background Config
   const [bgConfig, setBgConfig] = useState<BackgroundConfig>(INITIAL_BG_CONFIG);
 
   // UI State
   const [isExporting, setIsExporting] = useState(false);
-  const [canvasScale, setCanvasScale] = useState(0.6); // Viewport zoom
+  const [canvasScale, setCanvasScale] = useState(0.6);
+  
+  // Theme State
+  const [isDarkMode, setIsDarkMode] = useState(true);
+
+  // Mobile specific state
+  const [isMobileSheetOpen, setIsMobileSheetOpen] = useState(false);
+  const [isMobile, setIsMobile] = useState(false);
 
   // Refs
   const workspaceRef = useRef<HTMLDivElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const replaceInputRef = useRef<HTMLInputElement>(null);
   
-  // Cache for Font CSS to speed up export
   const fontCssRef = useRef<string>('');
 
   // --- Effects ---
   
-  // Pre-fetch Font CSS on mount to make export instant
   useEffect(() => {
     fetch(GOOGLE_FONTS_URL)
       .then(res => {
@@ -71,29 +78,50 @@ export default function App() {
       .then(css => {
         fontCssRef.current = css;
       })
-      .catch(e => console.warn('Background font fetch failed (will retry on export if needed):', e));
+      .catch(e => console.warn('Background font fetch failed:', e));
   }, []);
+
+  // Responsive Check
+  useEffect(() => {
+    const checkMobile = () => setIsMobile(window.innerWidth < 768);
+    checkMobile();
+    window.addEventListener('resize', checkMobile);
+    return () => window.removeEventListener('resize', checkMobile);
+  }, []);
+
+  // Auto-open sheet on mobile when selecting a layer or tab
+  useEffect(() => {
+    if (isMobile) {
+      if (selectedLayerId) {
+        // If layer selected, close tool tab and open sheet (for properties)
+        setActiveTab(null);
+        setIsMobileSheetOpen(true);
+      } else if (activeTab) {
+        // If tool selected, open sheet
+        setIsMobileSheetOpen(true);
+      } else {
+        setIsMobileSheetOpen(false);
+      }
+    }
+  }, [selectedLayerId, activeTab, isMobile]);
 
   // --- Computed ---
   const selectedLayer = layers.find(l => l.id === selectedLayerId);
 
   // --- Handlers ---
+  const toggleTheme = () => setIsDarkMode(!isDarkMode);
 
-  const handleImageUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+  const handleImageUpload = (e: React.ChangeEvent<HTMLInputElement>, isReplace = false) => {
     if (e.target.files && e.target.files[0]) {
       const reader = new FileReader();
       reader.onload = (event) => {
         const result = event.target?.result as string;
-        
-        // Load image to get natural dimensions
         const img = new Image();
         img.onload = () => {
           const width = img.naturalWidth;
           const height = img.naturalHeight;
-          
           setOriginalSize({ width, height });
-          // If it's the first upload OR if currently using original aspect ratio, update it
-          if (!image || aspectRatio.name === 'original') {
+          if (!image || (!isReplace && aspectRatio.name === 'original') || (isReplace && aspectRatio.name === 'original')) {
              setAspectRatio({
               name: 'original',
               width: width,
@@ -102,36 +130,26 @@ export default function App() {
               icon: 'image'
             });
           }
-          
           setImage(result);
-          // If replacing image, we might want to keep layers, but reset bg config
           setBgConfig(INITIAL_BG_CONFIG);
         };
         img.src = result;
       };
       reader.readAsDataURL(e.target.files[0]);
     }
-    // Reset input value to allow re-uploading same file
     if (e.target) e.target.value = '';
   };
 
   const addTextLayer = () => {
-    if (!image) {
-        alert("请先上传图片");
-        return;
-    }
-
+    if (!image) { alert("请先上传图片"); return; }
     const content = "双击编辑文本";
-    
     const newLayer: Layer = {
       id: uuidv4(),
       type: LayerType.TEXT,
+      // Position higher up on mobile to avoid bottom sheet
       x: aspectRatio.width / 2 - 200,
-      y: aspectRatio.height / 2 - 75,
-      width: 400, 
-      height: 150, 
-      rotation: 0,
-      content: content,
+      y: isMobile ? aspectRatio.height * 0.2 : aspectRatio.height / 2 - 75,
+      width: 400, height: 150, rotation: 0, content,
       style: { ...INITIAL_TEXT_STYLE },
     };
     setLayers(prev => [...prev, newLayer]);
@@ -139,20 +157,13 @@ export default function App() {
   };
 
   const addStickerLayer = (sticker: string) => {
-    if (!image) {
-        alert("请先上传图片");
-        return;
-    }
-
+    if (!image) { alert("请先上传图片"); return; }
     const newLayer: Layer = {
       id: uuidv4(),
       type: LayerType.STICKER,
       x: aspectRatio.width / 2 - 50,
-      y: aspectRatio.height / 2 - 50,
-      width: 150,
-      height: 150,
-      rotation: 0,
-      content: sticker,
+      y: isMobile ? aspectRatio.height * 0.2 : aspectRatio.height / 2 - 50,
+      width: 150, height: 150, rotation: 0, content: sticker,
     };
     setLayers(prev => [...prev, newLayer]);
     setSelectedLayerId(newLayer.id);
@@ -163,11 +174,7 @@ export default function App() {
   };
   
   const updateLayerStyle = (id: string, styleUpdates: Partial<FontStyle>) => {
-    setLayers(prev => prev.map(l => 
-      l.id === id && l.type === LayerType.TEXT 
-        ? { ...l, style: { ...l.style!, ...styleUpdates } } 
-        : l
-    ));
+    setLayers(prev => prev.map(l => l.id === id && l.type === LayerType.TEXT ? { ...l, style: { ...l.style!, ...styleUpdates } } : l));
   };
 
   const deleteLayer = (id: string) => {
@@ -179,45 +186,24 @@ export default function App() {
     if (!workspaceRef.current || !image) return;
     setIsExporting(true);
     const originalSelection = selectedLayerId;
-    setSelectedLayerId(null); // Deselect for clean capture
+    setSelectedLayerId(null);
 
     try {
-      // Tiny delay to ensure React renders the deselected state (flushing sync updates)
       await new Promise(resolve => setTimeout(resolve, 10));
-
       const commonConfig = {
-        skipAutoScale: true, // Optimization since we set dimensions manually
-        pixelRatio: 1, // 1:1 pixel ratio
-        width: aspectRatio.width,
-        height: aspectRatio.height,
-        canvasWidth: aspectRatio.width, // Force exact output width
-        canvasHeight: aspectRatio.height, // Force exact output height
-        fontEmbedCSS: fontCssRef.current, // Use pre-fetched CSS
-        style: {
-          transform: 'none', // Critical: Ignore the viewport zoom
-          transformOrigin: 'top left'
-        },
-        // Only fetch if necessary
-        fetchRequestInit: {
-            mode: 'cors' as RequestMode,
-            credentials: 'omit' as RequestCredentials,
-        }
+        skipAutoScale: true, pixelRatio: 1,
+        width: aspectRatio.width, height: aspectRatio.height,
+        canvasWidth: aspectRatio.width, canvasHeight: aspectRatio.height,
+        fontEmbedCSS: fontCssRef.current,
+        style: { transform: 'none', transformOrigin: 'top left' },
+        fetchRequestInit: { mode: 'cors' as RequestMode, credentials: 'omit' as RequestCredentials }
       };
 
       let dataUrl;
       try {
-          // Attempt 1: Fast (No Cache Busting)
-          dataUrl = await toPng(workspaceRef.current!, { 
-              ...commonConfig,
-              cacheBust: false, 
-          });
+          dataUrl = await toPng(workspaceRef.current!, { ...commonConfig, cacheBust: false });
       } catch (error) {
-          console.warn("Fast export failed, retrying with cacheBust...", error);
-          // Attempt 2: Retry with Cache Busting (Slower fallback)
-          dataUrl = await toPng(workspaceRef.current!, { 
-              ...commonConfig,
-              cacheBust: true, 
-          });
+          dataUrl = await toPng(workspaceRef.current!, { ...commonConfig, cacheBust: true });
       }
       
       if (dataUrl) {
@@ -225,575 +211,658 @@ export default function App() {
           link.download = `tuling-design-${Date.now()}.png`;
           link.href = dataUrl;
           link.click();
-      } else {
-          throw new Error("Failed to generate image data");
       }
     } catch (err) {
       console.error('Export failed', err);
-      alert("导出失败，请重试 (Export Failed)");
+      alert('导出失败，请重试');
     } finally {
       setIsExporting(false);
       setSelectedLayerId(originalSelection);
     }
   };
 
-  // Keyboard shortcut for delete
-  useEffect(() => {
-    const handleKeyDown = (e: KeyboardEvent) => {
-      if ((e.key === 'Delete' || e.key === 'Backspace') && selectedLayerId) {
-        // Do not delete if user is typing in an input
-        const target = e.target as HTMLElement;
-        if (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA') return;
-        deleteLayer(selectedLayerId);
-      }
-    };
-    window.addEventListener('keydown', handleKeyDown);
-    return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [selectedLayerId]);
-
-  // Fit to screen on image load or resize
-  useEffect(() => {
-    if (containerRef.current && aspectRatio) {
-      const { width: contW, height: contH } = containerRef.current.getBoundingClientRect();
-      const pad = 60;
-      const scaleW = (contW - pad) / aspectRatio.width;
-      const scaleH = (contH - pad) / aspectRatio.height;
-      setCanvasScale(Math.min(scaleW, scaleH, 0.8));
+  // Callback to close sheet when editing starts on canvas
+  const handleLayerEditStart = () => {
+    if (isMobile) {
+      setIsMobileSheetOpen(false);
     }
-  }, [aspectRatio, image]);
+  };
 
-  // --- Render Functions ---
-
-  return (
-    <div className="flex flex-col h-screen bg-[#111827] text-white overflow-hidden font-sans">
-      
-      {/* Persistent File Input for Upload/Replace */}
-      <input 
-        ref={fileInputRef} 
-        type="file" 
-        accept="image/*" 
-        onChange={handleImageUpload} 
-        className="hidden" 
-      />
-
-      {/* Header */}
-      <Header 
-        onReset={() => { setImage(null); setLayers([]); setOriginalSize(null); }} 
-        hasImage={!!image}
-      />
-
-      {/* Main Workspace */}
-      <div className="flex-1 flex overflow-hidden">
-        
-        {/* Left Toolbar (Sidebar) */}
-        <div className="w-16 md:w-20 bg-[#1f2937] border-r border-gray-700 flex flex-col items-center py-4 z-20 shadow-lg justify-between h-full">
-           
-           {/* Top Tools */}
-           <div className="flex flex-col items-center gap-4 w-full">
-              <ToolButton active={leftTab === 'layout'} onClick={() => { setLeftTab('layout'); setSelectedLayerId(null); }} icon={<Layout size={20} />} label="布局" />
-              <ToolButton active={leftTab === 'filter'} onClick={() => { setLeftTab('filter'); setSelectedLayerId(null); }} icon={<Palette size={20} />} label="滤镜" />
-              <ToolButton active={leftTab === 'text'} onClick={() => { setLeftTab('text'); }} icon={<TypeIcon size={20} />} label="文字" />
-              <ToolButton active={leftTab === 'sticker'} onClick={() => { setLeftTab('sticker'); }} icon={<Smile size={20} />} label="贴纸" />
-           </div>
-
-           {/* Bottom Actions */}
-           <div className="flex flex-col items-center gap-4 w-full mb-2">
-              <ActionButton 
-                onClick={() => fileInputRef.current?.click()} 
-                icon={<ImageIcon size={20} />} 
-                label="换图" 
-                colorClass="bg-blue-100 text-blue-600 hover:bg-blue-200"
-              />
-              <ActionButton 
-                onClick={handleExport} 
-                icon={isExporting ? <div className="w-5 h-5 border-2 border-green-600 border-t-transparent rounded-full animate-spin"></div> : <Download size={20} />} 
-                label="导出" 
-                disabled={!image || isExporting}
-                colorClass="bg-green-100 text-green-600 hover:bg-green-200 disabled:opacity-50 disabled:cursor-not-allowed"
-              />
-           </div>
-        </div>
-
-        {/* Left Panel Content (Drawer) */}
-        <div className="w-64 bg-[#1f2937] border-r border-gray-700 flex flex-col z-10 overflow-y-auto custom-scrollbar">
-           {leftTab === 'layout' && (
-             <div className="p-4 space-y-6">
-               <h3 className="font-bold text-gray-300 flex items-center gap-2"><Layout size={16}/> 画布尺寸</h3>
-               <div className="grid grid-cols-2 gap-3">
-                 {/* Original Size Option - Only if image loaded */}
-                 {originalSize && (
-                   <button
-                     onClick={() => setAspectRatio({
-                        name: 'original',
-                        width: originalSize.width,
-                        height: originalSize.height,
-                        label: '原图',
-                        icon: 'image'
-                     })}
-                     className={clsx(
-                       "flex flex-col items-center gap-2 p-3 rounded-lg border-2 transition-all",
-                       aspectRatio.name === 'original'
-                         ? "border-primary bg-primary/20 text-primary" 
-                         : "border-gray-600 bg-gray-700/50 hover:border-gray-500"
-                     )}
-                   >
-                     <div className={clsx("border-2 rounded-sm transition-colors flex items-center justify-center bg-gray-600", aspectRatio.name === 'original' ? "border-primary" : "border-gray-400")} 
-                          style={{ width: 20, height: 20 }}>
-                          <span className="text-[10px]">1:1</span>
-                     </div>
-                     <span className="text-xs">原图尺寸</span>
-                   </button>
-                 )}
-
-                 {ASPECT_RATIOS.map(ratio => (
-                   <button
-                     key={ratio.name}
-                     onClick={() => setAspectRatio(ratio)}
-                     className={clsx(
-                       "flex flex-col items-center gap-2 p-3 rounded-lg border-2 transition-all",
-                       aspectRatio.name === ratio.name 
-                         ? "border-primary bg-primary/20 text-primary" 
-                         : "border-gray-600 bg-gray-700/50 hover:border-gray-500"
-                     )}
-                   >
-                     <div className={clsx("border-2 rounded-sm transition-colors", aspectRatio.name === ratio.name ? "border-primary" : "border-gray-400")} 
-                          style={{ width: 20, height: (20 * ratio.height) / ratio.width }}></div>
-                     <span className="text-xs">{ratio.label}</span>
-                   </button>
-                 ))}
-               </div>
-               
-               {image && (
-                 <div className="pt-4 border-t border-gray-700 animate-in fade-in slide-in-from-left-4 duration-500">
-                    <h3 className="font-bold text-gray-300 mb-2">背景调整</h3>
-                    <p className="text-xs text-gray-500 mb-4">选中背景图后在右侧调整</p>
-                    <button 
-                      onClick={() => setSelectedLayerId(null)}
-                      className="w-full py-2 bg-gray-700 hover:bg-gray-600 rounded text-sm transition-colors"
-                    >
-                      选中背景图
-                    </button>
-                 </div>
-               )}
-             </div>
-           )}
-
-           {leftTab === 'filter' && (
-             <div className="p-4 space-y-4">
-               <h3 className="font-bold text-gray-300 flex items-center gap-2"><Palette size={16}/> 滤镜风格</h3>
-               <div className="grid grid-cols-2 gap-3">
-                 {FILTERS.map(filter => (
-                   <button
-                     key={filter.name}
-                     onClick={() => setBgConfig(p => ({ ...p, filter: filter.value }))}
-                     disabled={!image}
-                     className={clsx(
-                       "h-20 rounded-lg relative overflow-hidden border-2 group transition-all",
-                       bgConfig.filter === filter.value ? "border-primary" : "border-transparent",
-                       !image ? "opacity-50 cursor-not-allowed" : "cursor-pointer"
-                     )}
-                   >
-                     <div className="absolute inset-0" style={{ backgroundColor: filter.previewColor }}></div>
-                     <div className="absolute inset-0 flex items-center justify-center bg-black/40 group-hover:bg-black/20">
-                       <span className="text-sm font-medium">{filter.name}</span>
-                     </div>
-                   </button>
-                 ))}
-               </div>
-               {!image && <p className="text-xs text-center text-gray-500 mt-2">请先上传图片以应用滤镜</p>}
-             </div>
-           )}
-
-           {leftTab === 'text' && (
-             <div className="p-4 space-y-4">
-               <h3 className="font-bold text-gray-300 flex items-center gap-2"><TypeIcon size={16}/> 添加文字</h3>
-               <button 
-                 onClick={addTextLayer}
-                 className="w-full bg-gradient-to-r from-[#6366f1] to-[#a855f7] hover:from-[#4f46e5] hover:to-[#9333ea] text-white p-3 rounded-lg flex items-center justify-center gap-2 transition-all shadow-lg transform hover:-translate-y-0.5"
-               >
-                 <TypeIcon size={18} /> 普通文本
-               </button>
-               
-               <div className="text-xs text-gray-500 mt-4 leading-relaxed">
-                 {!image ? "请先上传图片，然后点击按钮添加文本。" : "点击上方按钮添加文本图层。选中图层后，在右侧面板编辑内容和样式。"}
-               </div>
-             </div>
-           )}
-
-           {leftTab === 'sticker' && (
-             <div className="p-4">
-               <h3 className="font-bold text-gray-300 mb-4 flex items-center gap-2"><Smile size={16}/> 创意贴纸</h3>
-               <div className="grid grid-cols-4 gap-2">
-                 {STICKERS.map(s => (
-                   <button
-                     key={s}
-                     onClick={() => addStickerLayer(s)}
-                     className="aspect-square bg-gray-700 hover:bg-gray-600 rounded flex items-center justify-center text-2xl transition-transform hover:scale-110"
-                   >
-                     {s}
-                   </button>
-                 ))}
-               </div>
-               {!image && <p className="text-xs text-center text-gray-500 mt-4">请先上传图片</p>}
-             </div>
-           )}
-        </div>
-
-        {/* Center Canvas */}
-        <div 
-           ref={containerRef}
-           className="flex-1 bg-[#0f172a] relative overflow-hidden flex items-center justify-center select-none bg-[url('https://www.transparenttextures.com/patterns/dark-matter.png')] "
-           onMouseDown={() => setSelectedLayerId(null)}
+  const renderToolsPanel = () => (
+    <div className="h-full flex flex-col">
+      <div className="flex items-center justify-between p-4 border-b border-gray-200 dark:border-gray-700">
+        <h3 className="font-bold text-lg text-gray-900 dark:text-white">
+           {activeTab === 'layout' && '画布尺寸'}
+           {activeTab === 'filter' && '滤镜效果'}
+           {activeTab === 'text' && '添加文字'}
+           {activeTab === 'sticker' && '添加贴纸'}
+        </h3>
+        {/* Mobile Close Button */}
+        <button 
+          className="md:hidden p-1 text-gray-500 dark:text-gray-400"
+          onClick={() => { setActiveTab(null); setIsMobileSheetOpen(false); }}
         >
-           {!image ? (
-               // Empty State / Upload
-               <div 
-                  onClick={() => fileInputRef.current?.click()}
-                  className="group flex flex-col items-center justify-center p-12 border-2 border-dashed border-gray-600 rounded-3xl bg-[#1e293b]/50 hover:bg-[#1e293b] hover:border-primary transition-all duration-300 cursor-pointer animate-in fade-in zoom-in duration-500"
-               >
-                  <div className="w-20 h-20 bg-gray-800 rounded-full flex items-center justify-center mb-6 group-hover:scale-110 group-hover:bg-primary/20 transition-all shadow-lg">
-                      <Upload size={36} className="text-gray-400 group-hover:text-primary transition-colors" />
-                  </div>
-                  <h3 className="text-xl font-bold text-white mb-2">点击上传图片</h3>
-                  <p className="text-sm text-gray-400">支持 JPG, PNG, WebP</p>
-               </div>
-           ) : (
-               // Active Workspace
-               <>
-                 <div 
-                   ref={workspaceRef}
-                   className="relative bg-white shadow-2xl overflow-hidden transition-all duration-200 ease-linear origin-center"
-                   style={{
-                     width: aspectRatio.width,
-                     height: aspectRatio.height,
-                     transform: `scale(${canvasScale})`,
-                   }}
-                 >
-                    {/* Background Image Layer */}
-                    <div 
-                      className="absolute inset-0 w-full h-full overflow-hidden"
-                      style={{ filter: bgConfig.filter }}
-                    >
-                       <img 
-                         src={image} 
-                         alt="background" 
-                         className="absolute origin-center object-cover w-full h-full pointer-events-none" 
-                         style={{
-                           transform: `translate(${bgConfig.x}px, ${bgConfig.y}px) scale(${bgConfig.scale})`,
-                         }}
-                       />
-                    </div>
+          <ChevronDown />
+        </button>
+      </div>
 
-                    {/* Layers */}
-                    {layers.map(layer => (
-                      <LayerComponent
-                        key={layer.id}
-                        layer={layer}
-                        isSelected={selectedLayerId === layer.id}
-                        onSelect={setSelectedLayerId}
-                        onUpdate={updateLayer}
-                        onDelete={deleteLayer}
-                        scale={canvasScale}
-                      />
-                    ))}
-                 </div>
+      <div className="flex-1 overflow-y-auto p-4 custom-scrollbar">
+        {/* Layout Tab */}
+        {activeTab === 'layout' && (
+          <>
+            <div className="grid grid-cols-2 gap-3 mb-6">
+              {originalSize && (
+                <button
+                  onClick={() => setAspectRatio({
+                    name: 'original',
+                    width: originalSize.width,
+                    height: originalSize.height,
+                    label: '原图',
+                    icon: 'image'
+                  })}
+                  className={clsx(
+                    "flex flex-col items-center justify-center p-4 rounded-xl border-2 transition-all",
+                    aspectRatio.name === 'original' ? "border-primary bg-primary/10 text-primary" : "border-gray-200 dark:border-gray-700 hover:border-gray-300 dark:hover:border-gray-600 bg-white dark:bg-[#1e293b] text-gray-700 dark:text-gray-200"
+                  )}
+                >
+                  <span className="text-2xl mb-2 font-bold">1:1</span>
+                  <span className="text-sm">原图尺寸</span>
+                </button>
+              )}
+              {ASPECT_RATIOS.map(ratio => (
+                <button
+                  key={ratio.name}
+                  onClick={() => setAspectRatio(ratio)}
+                  className={clsx(
+                    "flex flex-col items-center justify-center p-4 rounded-xl border-2 transition-all",
+                    aspectRatio.name === ratio.name ? "border-primary bg-primary/10 text-primary" : "border-gray-200 dark:border-gray-700 hover:border-gray-300 dark:hover:border-gray-600 bg-white dark:bg-[#1e293b] text-gray-700 dark:text-gray-200"
+                  )}
+                >
+                  <div className={clsx(
+                    "border-2 mb-2 rounded-sm",
+                    aspectRatio.name === ratio.name ? "border-primary" : "border-gray-400",
+                    ratio.name === '1:1' && "w-6 h-6",
+                    ratio.name === '4:3' && "w-8 h-6",
+                    ratio.name === '3:4' && "w-6 h-8",
+                    ratio.name === '16:9' && "w-9 h-5",
+                    ratio.name === '9:16' && "w-5 h-9",
+                  )} />
+                  <span className="text-sm">{ratio.label}</span>
+                </button>
+              ))}
+            </div>
 
-                 {/* Zoom Controls */}
-                 <div className="absolute bottom-6 left-1/2 -translate-x-1/2 bg-gray-800/90 backdrop-blur rounded-full px-4 py-2 flex items-center gap-4 text-sm text-gray-300 border border-gray-700 shadow-xl z-30">
-                    <button onClick={() => setCanvasScale(s => Math.max(0.1, s - 0.1))} className="hover:text-white"><ZoomOut size={16} /></button>
-                    <span className="w-12 text-center">{Math.round(canvasScale * 100)}%</span>
-                    <button onClick={() => setCanvasScale(s => Math.min(2, s + 0.1))} className="hover:text-white"><ZoomIn size={16} /></button>
-                 </div>
-               </>
-           )}
+            <div className="border-t border-gray-200 dark:border-gray-700 pt-4">
+              <h4 className="text-sm text-gray-500 dark:text-gray-400 mb-3">背景调整</h4>
+              <button
+                onClick={() => setSelectedLayerId(null)}
+                className="w-full py-3 bg-white dark:bg-[#1e293b] border border-gray-200 dark:border-gray-600 rounded-lg hover:bg-gray-50 dark:hover:bg-gray-700 transition-colors text-gray-700 dark:text-white"
+              >
+                选中背景图
+              </button>
+              <p className="text-xs text-gray-500 mt-2 text-center">选中背景图后在右侧/下方调整</p>
+            </div>
+          </>
+        )}
+
+        {/* Filters Tab */}
+        {activeTab === 'filter' && (
+          <div className="grid grid-cols-3 gap-3">
+            {FILTERS.map(filter => (
+              <button
+                key={filter.name}
+                onClick={() => setBgConfig(prev => ({ ...prev, filter: filter.value }))}
+                className={clsx(
+                  "flex flex-col items-center gap-2 p-2 rounded-lg transition-all text-gray-700 dark:text-gray-200",
+                  bgConfig.filter === filter.value ? "bg-primary/20 ring-2 ring-primary" : "hover:bg-gray-100 dark:hover:bg-[#1e293b]"
+                )}
+              >
+                <div 
+                  className="w-full aspect-square rounded-full shadow-inner border border-gray-200 dark:border-gray-600"
+                  style={{ backgroundColor: filter.previewColor }}
+                />
+                <span className="text-xs">{filter.name}</span>
+              </button>
+            ))}
+          </div>
+        )}
+
+        {/* Text Tab */}
+        {activeTab === 'text' && (
+          <div className="space-y-4">
+            <button
+              onClick={addTextLayer}
+              className="w-full py-4 bg-gradient-to-r from-[#6366f1] to-[#a855f7] rounded-xl font-bold text-lg text-white shadow-lg hover:shadow-primary/30 hover:scale-[1.02] transition-all flex items-center justify-center gap-2"
+            >
+              <TypeIcon size={24} /> 普通文本
+            </button>
+            <p className="text-xs text-gray-500 dark:text-gray-400 text-center leading-relaxed">
+              点击上方按钮添加文本图层。选中图层后，在右侧面板编辑内容和样式。
+            </p>
+          </div>
+        )}
+
+        {/* Sticker Tab */}
+        {activeTab === 'sticker' && (
+          <div className="grid grid-cols-5 gap-3">
+            {STICKERS.map((sticker, i) => (
+              <button
+                key={i}
+                onClick={() => addStickerLayer(sticker)}
+                className="text-3xl hover:scale-125 transition-transform p-2 cursor-pointer"
+              >
+                {sticker}
+              </button>
+            ))}
+          </div>
+        )}
+      </div>
+    </div>
+  );
+
+  const renderPropertiesPanel = () => (
+    <div className="h-full flex flex-col">
+       <div className="flex items-center justify-between p-4 border-b border-gray-200 dark:border-gray-700">
+        <h3 className="font-bold text-lg text-gray-900 dark:text-white">
+           {selectedLayer ? (selectedLayer.type === LayerType.TEXT ? '编辑文字' : '编辑元素') : '背景调整'}
+        </h3>
+        <div className="flex gap-2">
+            {/* Mobile Done Button */}
+            <button 
+              className="md:hidden p-1.5 bg-primary/20 text-primary rounded-lg flex items-center gap-1 px-3"
+              onClick={() => { setSelectedLayerId(null); setIsMobileSheetOpen(false); }}
+            >
+              <Check size={16} /> <span className="text-xs font-bold">完成</span>
+            </button>
+            <button 
+              className="md:hidden p-1 text-gray-500 dark:text-gray-400"
+              onClick={() => { setSelectedLayerId(null); setIsMobileSheetOpen(false); }}
+            >
+              <ChevronDown />
+            </button>
         </div>
+      </div>
+      
+      <div className="flex-1 overflow-y-auto p-4 custom-scrollbar">
+      {selectedLayer ? (
+        <>
+          {selectedLayer.type === LayerType.TEXT && selectedLayer.style && (
+            <div className="space-y-6">
+              <div>
+                <label className="text-xs text-gray-500 dark:text-gray-400 mb-2 block">内容</label>
+                <textarea
+                  value={selectedLayer.content}
+                  onChange={(e) => updateLayer(selectedLayer.id, { content: e.target.value })}
+                  className="w-full bg-gray-100 dark:bg-slate-900 border border-gray-200 dark:border-gray-700 text-gray-900 dark:text-white rounded-lg p-3 text-sm focus:border-primary outline-none resize-none h-24"
+                  placeholder="输入文本内容..."
+                />
+              </div>
 
-        {/* Right Properties Panel (Contextual) */}
-        <div className="w-80 bg-[#1f2937] border-l border-gray-700 flex flex-col z-20 overflow-y-auto custom-scrollbar shadow-xl">
-           {!image ? (
-               <div className="flex-1 flex flex-col items-center justify-center p-8 text-center text-gray-500 space-y-4">
-                  <div className="w-16 h-16 rounded-full bg-gray-800 flex items-center justify-center">
-                    <ImageIcon size={32} className="opacity-50" />
+              <div>
+                 <div className="flex justify-between mb-2">
+                    <label className="text-xs text-gray-500 dark:text-gray-400">大小 ({Math.round(selectedLayer.style.fontSize)})</label>
+                 </div>
+                <input
+                  type="range"
+                  min="12"
+                  max="200"
+                  value={selectedLayer.style.fontSize}
+                  onChange={(e) => updateLayerStyle(selectedLayer.id, { fontSize: Number(e.target.value) })}
+                  className="w-full accent-primary h-1 bg-gray-200 dark:bg-gray-700 rounded-lg appearance-none cursor-pointer"
+                />
+              </div>
+
+               <div>
+                <label className="text-xs text-gray-500 dark:text-gray-400 mb-2 block">字体</label>
+                <select
+                  value={selectedLayer.style.fontFamily}
+                  onChange={(e) => updateLayerStyle(selectedLayer.id, { fontFamily: e.target.value })}
+                  className="w-full bg-gray-100 dark:bg-slate-900 border border-gray-200 dark:border-gray-700 text-gray-900 dark:text-white rounded-lg p-2 text-sm focus:border-primary outline-none"
+                >
+                  {FONTS.map(font => (
+                    <option key={font.value} value={font.value}>{font.name}</option>
+                  ))}
+                </select>
+              </div>
+
+              {/* Advanced Text Styles */}
+              <div className="grid grid-cols-2 gap-4">
+                  <div>
+                    <label className="text-xs text-gray-500 dark:text-gray-400 mb-2 block">对齐</label>
+                    <div className="flex bg-gray-100 dark:bg-slate-900 rounded-lg border border-gray-200 dark:border-gray-700 p-1">
+                      {[
+                        { icon: AlignLeft, value: 'left' },
+                        { icon: AlignCenter, value: 'center' },
+                        { icon: AlignRight, value: 'right' }
+                      ].map((opt) => (
+                        <button
+                           key={opt.value}
+                           onClick={() => updateLayerStyle(selectedLayer.id, { textAlign: opt.value as any })}
+                           className={clsx(
+                             "flex-1 p-1 rounded flex justify-center",
+                             selectedLayer.style?.textAlign === opt.value ? "bg-white dark:bg-gray-700 text-gray-900 dark:text-white shadow-sm" : "text-gray-400"
+                           )}
+                        >
+                          <opt.icon size={16} />
+                        </button>
+                      ))}
+                    </div>
                   </div>
                   <div>
-                    <h3 className="text-gray-400 font-medium mb-1">准备就绪</h3>
-                    <p className="text-xs">上传图片即可开始<br/>使用右侧工具进行编辑</p>
+                     <label className="text-xs text-gray-500 dark:text-gray-400 mb-2 block">样式</label>
+                      <button
+                           onClick={() => updateLayerStyle(selectedLayer.id, { fontWeight: selectedLayer.style?.fontWeight === 'bold' ? 'normal' : 'bold' })}
+                           className={clsx(
+                             "w-full p-2 rounded border border-gray-200 dark:border-gray-700 flex justify-center items-center gap-2",
+                             selectedLayer.style?.fontWeight === 'bold' ? "bg-gray-100 dark:bg-gray-700 text-gray-900 dark:text-white" : "text-gray-400"
+                           )}
+                        >
+                          <Bold size={16} /> 粗体
+                        </button>
                   </div>
-               </div>
-           ) : selectedLayerId ? (
-              // Layer Selected
-              selectedLayer?.type === LayerType.TEXT ? (
-                <TextPropertiesPanel 
-                  layer={selectedLayer} 
-                  onUpdate={(updates) => updateLayer(selectedLayer.id, updates)}
-                  onUpdateStyle={(style) => updateLayerStyle(selectedLayer.id, style)}
-                  onDelete={() => deleteLayer(selectedLayer.id)}
-                />
-              ) : (
-                <StickerPropertiesPanel
-                  layer={selectedLayer!}
-                  onDelete={() => deleteLayer(selectedLayerId)}
-                />
-              )
-           ) : (
-              // No Layer Selected -> Background Properties
-              <BackgroundPropertiesPanel 
-                config={bgConfig} 
-                onChange={setBgConfig} 
+              </div>
+
+               <div>
+                <label className="text-xs text-gray-500 dark:text-gray-400 mb-2 block">颜色</label>
+                <div className="flex flex-wrap gap-2">
+                  {['#000000', '#ffffff', '#ef4444', '#e11d48', '#9333ea', '#6366f1', '#3b82f6', '#06b6d4', '#14b8a6', '#22c55e', '#84cc16', '#eab308', '#f97316', '#f43f5e'].map(color => (
+                    <button
+                      key={color}
+                      onClick={() => updateLayerStyle(selectedLayer.id, { color })}
+                      className={clsx(
+                        "w-6 h-6 rounded-full border border-gray-200 dark:border-gray-600 transition-transform hover:scale-110",
+                        selectedLayer.style?.color === color && "ring-2 ring-primary scale-110"
+                      )}
+                      style={{ backgroundColor: color }}
+                    />
+                  ))}
+                </div>
+              </div>
+
+               <div>
+                <label className="text-xs text-gray-500 dark:text-gray-400 mb-2 block">背景颜色</label>
+                <div className="flex flex-wrap gap-2">
+                   <button
+                      onClick={() => updateLayerStyle(selectedLayer.id, { backgroundColor: 'transparent' })}
+                      className={clsx(
+                        "w-6 h-6 rounded-full border border-gray-200 dark:border-gray-600 flex items-center justify-center text-[10px] text-gray-500 dark:text-gray-300",
+                        selectedLayer.style?.backgroundColor === 'transparent' && "ring-2 ring-primary"
+                      )}
+                    >无</button>
+                  {['#000000', '#ffffff', '#ef4444', '#e11d48', '#9333ea', '#6366f1', '#3b82f6', '#06b6d4'].map(color => (
+                    <button
+                      key={color}
+                      onClick={() => updateLayerStyle(selectedLayer.id, { backgroundColor: color })}
+                      className={clsx(
+                        "w-6 h-6 rounded-full border border-gray-200 dark:border-gray-600 transition-transform hover:scale-110",
+                        selectedLayer.style?.backgroundColor === color && "ring-2 ring-primary scale-110"
+                      )}
+                      style={{ backgroundColor: color }}
+                    />
+                  ))}
+                </div>
+              </div>
+
+              <div className="space-y-3 pt-2 border-t border-gray-200 dark:border-gray-700">
+                  <div>
+                    <label className="text-xs text-gray-500 dark:text-gray-400 mb-1 block">内边距</label>
+                     <input
+                        type="range" min="0" max="50"
+                        value={selectedLayer.style.padding}
+                        onChange={(e) => updateLayerStyle(selectedLayer.id, { padding: Number(e.target.value) })}
+                        className="w-full accent-primary h-1 bg-gray-200 dark:bg-gray-700 rounded-lg appearance-none cursor-pointer"
+                      />
+                  </div>
+                  <div>
+                    <label className="text-xs text-gray-500 dark:text-gray-400 mb-1 block">圆角</label>
+                     <input
+                        type="range" min="0" max="50"
+                        value={selectedLayer.style.borderRadius}
+                        onChange={(e) => updateLayerStyle(selectedLayer.id, { borderRadius: Number(e.target.value) })}
+                        className="w-full accent-primary h-1 bg-gray-200 dark:bg-gray-700 rounded-lg appearance-none cursor-pointer"
+                      />
+                  </div>
+              </div>
+
+            </div>
+          )}
+          
+          <button
+            onClick={() => deleteLayer(selectedLayer.id)}
+            className="w-full mt-8 py-3 bg-red-500/10 text-red-500 border border-red-500/50 rounded-lg hover:bg-red-500 hover:text-white transition-all flex items-center justify-center gap-2"
+          >
+            <Trash2 size={18} /> 删除此元素
+          </button>
+        </>
+      ) : (
+        <div className="space-y-6">
+           <div>
+              <div className="flex justify-between mb-2">
+                 <label className="text-xs text-gray-500 dark:text-gray-400">缩放 (Zoom)</label>
+                 <span className="text-xs text-gray-600 dark:text-gray-500">{bgConfig.scale.toFixed(2)}x</span>
+              </div>
+              <input
+                type="range"
+                min="0.5"
+                max="3"
+                step="0.1"
+                value={bgConfig.scale}
+                onChange={(e) => setBgConfig(prev => ({ ...prev, scale: Number(e.target.value) }))}
+                className="w-full accent-primary h-1 bg-gray-200 dark:bg-gray-700 rounded-lg appearance-none cursor-pointer"
               />
-           )}
+           </div>
+           
+           <div>
+              <div className="flex justify-between mb-2">
+                 <label className="text-xs text-gray-500 dark:text-gray-400">水平位置 (X)</label>
+                 <span className="text-xs text-gray-600 dark:text-gray-500">{bgConfig.x}px</span>
+              </div>
+              <input
+                type="range"
+                min="-500"
+                max="500"
+                value={bgConfig.x}
+                onChange={(e) => setBgConfig(prev => ({ ...prev, x: Number(e.target.value) }))}
+                className="w-full accent-primary h-1 bg-gray-200 dark:bg-gray-700 rounded-lg appearance-none cursor-pointer"
+              />
+           </div>
+
+           <div>
+              <div className="flex justify-between mb-2">
+                 <label className="text-xs text-gray-500 dark:text-gray-400">垂直位置 (Y)</label>
+                 <span className="text-xs text-gray-600 dark:text-gray-500">{bgConfig.y}px</span>
+              </div>
+              <input
+                type="range"
+                min="-500"
+                max="500"
+                value={bgConfig.y}
+                onChange={(e) => setBgConfig(prev => ({ ...prev, y: Number(e.target.value) }))}
+                className="w-full accent-primary h-1 bg-gray-200 dark:bg-gray-700 rounded-lg appearance-none cursor-pointer"
+              />
+           </div>
+
+           <button 
+             onClick={() => setBgConfig(INITIAL_BG_CONFIG)}
+             className="text-primary text-sm flex items-center gap-1 hover:underline"
+           >
+             <RotateCcw size={14} /> 重置位置
+           </button>
         </div>
+      )}
+      </div>
+    </div>
+  );
+
+  return (
+    <div className={clsx("w-full h-full", isDarkMode && "dark")}>
+      <div className="flex h-screen w-full bg-gray-50 dark:bg-[#0f172a] text-gray-900 dark:text-white overflow-hidden flex-col md:flex-row relative transition-colors duration-300">
+        {/* Hidden File Inputs */}
+        <input
+          type="file"
+          ref={fileInputRef}
+          onChange={(e) => handleImageUpload(e, false)}
+          accept="image/*"
+          className="hidden"
+        />
+        <input
+          type="file"
+          ref={replaceInputRef}
+          onChange={(e) => handleImageUpload(e, true)}
+          accept="image/*"
+          className="hidden"
+        />
+
+        {/* --- DESKTOP LEFT SIDEBAR --- */}
+        <div className="hidden md:flex w-20 flex-col items-center py-6 border-r border-gray-200 dark:border-gray-700 bg-white dark:bg-[#1e293b] z-20 transition-colors">
+          <div className="mb-8 p-2 bg-gradient-to-br from-primary to-secondary rounded-xl shadow-lg shadow-primary/20">
+            <ImageIcon className="text-white" size={24} />
+          </div>
+          
+          <nav className="flex-1 flex flex-col gap-6 w-full px-2">
+            {[
+              { id: 'layout', icon: Layout, label: '布局' },
+              { id: 'filter', icon: Palette, label: '滤镜' },
+              { id: 'text', icon: TypeIcon, label: '文字' },
+              { id: 'sticker', icon: Smile, label: '贴纸' },
+            ].map(item => (
+              <button
+                key={item.id}
+                onClick={() => { setActiveTab(item.id as any); setSelectedLayerId(null); }}
+                className={clsx(
+                  "flex flex-col items-center gap-1 p-2 rounded-lg transition-all w-full group relative",
+                  activeTab === item.id ? "text-primary" : "text-gray-400 hover:text-gray-900 dark:hover:text-white hover:bg-gray-100 dark:hover:bg-white/5"
+                )}
+              >
+                <div className={clsx(
+                  "p-2 rounded-lg transition-all",
+                  activeTab === item.id ? "bg-primary text-white shadow-lg shadow-primary/30" : "group-hover:scale-110"
+                )}>
+                  <item.icon size={22} />
+                </div>
+                <span className="text-[10px] font-medium">{item.label}</span>
+                {activeTab === item.id && (
+                  <div className="absolute left-0 top-1/2 -translate-y-1/2 w-1 h-8 bg-primary rounded-r-full -ml-2" />
+                )}
+              </button>
+            ))}
+          </nav>
+
+          {/* Desktop Bottom Actions */}
+          <div className="flex flex-col gap-4 w-full px-2 mb-2">
+            <button
+              onClick={() => replaceInputRef.current?.click()}
+              className="flex flex-col items-center gap-1 p-2 rounded-lg text-blue-500 dark:text-blue-400 hover:text-blue-600 dark:hover:text-blue-300 hover:bg-blue-500/10 transition-all"
+              title="换图"
+            >
+              <div className="p-2 rounded-lg bg-blue-500/20">
+                <ImageIcon size={20} />
+              </div>
+              <span className="text-[10px]">换图</span>
+            </button>
+            
+            <button
+              onClick={handleExport}
+              disabled={!image}
+              className="flex flex-col items-center gap-1 p-2 rounded-lg text-green-500 dark:text-green-400 hover:text-green-600 dark:hover:text-green-300 hover:bg-green-500/10 transition-all disabled:opacity-50 disabled:cursor-not-allowed"
+              title="导出"
+            >
+              <div className="p-2 rounded-lg bg-green-500/20">
+                <Download size={20} />
+              </div>
+              <span className="text-[10px]">导出</span>
+            </button>
+          </div>
+        </div>
+
+        {/* --- DESKTOP TOOL DRAWER --- */}
+        <div className={clsx(
+          "hidden md:flex flex-col border-r border-gray-200 dark:border-gray-700 bg-white/50 dark:bg-[#1e293b]/50 backdrop-blur-md transition-all duration-300 ease-in-out overflow-hidden",
+          activeTab ? "w-80 opacity-100" : "w-0 opacity-0 border-none"
+        )}>
+          {activeTab && renderToolsPanel()}
+        </div>
+
+        {/* --- MAIN WORKSPACE --- */}
+        <div 
+          ref={containerRef}
+          className="flex-1 flex flex-col relative overflow-hidden bg-gray-100 dark:bg-black transition-colors"
+        >
+          {/* Mobile Header */}
+          <div className="md:hidden h-14 flex items-center justify-between px-4 border-b border-gray-200 dark:border-gray-800 bg-white dark:bg-[#1e293b] z-30 transition-colors">
+            <div className="flex items-center gap-2">
+              <button 
+                onClick={toggleTheme}
+                className="p-1.5 rounded-full hover:bg-gray-100 dark:hover:bg-gray-800 text-gray-500 dark:text-gray-400 transition-colors"
+              >
+                {isDarkMode ? <Sun size={18} /> : <Moon size={18} />}
+              </button>
+              <div className="flex items-center gap-2">
+                 <div className="p-1.5 bg-gradient-to-br from-primary to-secondary rounded-lg">
+                    <ImageIcon className="text-white" size={16} />
+                 </div>
+                 <span className="font-bold text-gray-900 dark:text-white">图灵智绘</span>
+              </div>
+            </div>
+            <div className="flex gap-3">
+                <button 
+                  onClick={() => replaceInputRef.current?.click()}
+                  className="text-blue-500 dark:text-blue-400 p-1.5 bg-blue-500/10 rounded-lg"
+                >
+                  <ImageIcon size={18} />
+                </button>
+                <button 
+                  onClick={handleExport}
+                  disabled={!image}
+                  className="text-green-500 dark:text-green-400 p-1.5 bg-green-500/10 rounded-lg disabled:opacity-50"
+                >
+                  <Download size={18} />
+                </button>
+            </div>
+          </div>
+
+          {/* Desktop Header Controls */}
+          <div className="hidden md:flex absolute top-4 right-4 z-40 bg-white/80 dark:bg-[#1e293b]/80 backdrop-blur rounded-lg border border-gray-200 dark:border-gray-700 p-1 shadow-lg gap-1 transition-colors">
+            <button 
+              onClick={toggleTheme} 
+              className="p-2 hover:bg-gray-100 dark:hover:bg-white/10 rounded text-gray-600 dark:text-gray-300"
+              title={isDarkMode ? "切换到亮色模式" : "切换到暗色模式"}
+            >
+              {isDarkMode ? <Sun size={16}/> : <Moon size={16}/>}
+            </button>
+            <div className="w-px bg-gray-300 dark:bg-gray-700 mx-1" />
+            <button onClick={() => setCanvasScale(s => Math.max(0.2, s - 0.1))} className="p-2 hover:bg-gray-100 dark:hover:bg-white/10 rounded text-gray-600 dark:text-gray-300"><ZoomOut size={16}/></button>
+            <span className="text-xs flex items-center px-2 text-gray-500 dark:text-gray-400 min-w-[3rem] justify-center">{Math.round(canvasScale * 100)}%</span>
+            <button onClick={() => setCanvasScale(s => Math.min(2, s + 0.1))} className="p-2 hover:bg-gray-100 dark:hover:bg-white/10 rounded text-gray-600 dark:text-gray-300"><ZoomIn size={16}/></button>
+            <div className="w-px bg-gray-300 dark:bg-gray-700 mx-1" />
+            <button onClick={() => { setBgConfig(INITIAL_BG_CONFIG); setLayers([]); setImage(null); }} className="px-3 py-1.5 text-xs hover:bg-red-500/10 text-red-500 hover:text-red-600 dark:text-red-400 dark:hover:text-red-300 rounded flex items-center gap-1">
+              <RotateCcw size={14} /> 重置
+            </button>
+          </div>
+          
+          {/* Canvas Area */}
+          <div className="flex-1 flex items-center justify-center p-4 md:p-10 relative overflow-hidden pb-20 md:pb-10">
+            {!image ? (
+              <div className="flex flex-col items-center justify-center p-8 border-2 border-dashed border-gray-300 dark:border-gray-700 rounded-2xl bg-white/50 dark:bg-[#1e293b]/30 max-w-md w-full text-center transition-colors">
+                <div className="w-20 h-20 bg-gray-100 dark:bg-gray-800 rounded-full flex items-center justify-center mb-6">
+                  <ImageIcon size={40} className="text-gray-400 dark:text-gray-500" />
+                </div>
+                <h2 className="text-2xl font-bold mb-2 text-gray-900 dark:text-white">上传图片开始排版</h2>
+                <p className="text-gray-500 dark:text-gray-400 mb-8">支持 JPG, PNG 格式</p>
+                <button 
+                  onClick={() => fileInputRef.current?.click()}
+                  className="px-8 py-3 bg-primary hover:bg-primary/90 text-white rounded-xl font-medium transition-all shadow-lg shadow-primary/20 flex items-center gap-2"
+                >
+                  <Upload size={20} /> 选择图片
+                </button>
+              </div>
+            ) : (
+              <div 
+                className="relative shadow-2xl transition-transform duration-200 ease-out"
+                style={{ 
+                  width: aspectRatio.width, 
+                  height: aspectRatio.height,
+                  transform: `scale(${isMobile ? (window.innerWidth / aspectRatio.width) * 0.85 : canvasScale})`,
+                  transformOrigin: 'center center'
+                }}
+              >
+                {/* Capture Area */}
+                <div 
+                  ref={workspaceRef}
+                  className="w-full h-full relative bg-gray-900 overflow-hidden"
+                  onClick={() => setSelectedLayerId(null)}
+                >
+                  {/* Background Image */}
+                  <div 
+                    className="w-full h-full absolute inset-0"
+                    style={{ 
+                      filter: bgConfig.filter,
+                      transform: `scale(${bgConfig.scale}) translate(${bgConfig.x}px, ${bgConfig.y}px)`
+                    }}
+                  >
+                    <img src={image} alt="Background" className="w-full h-full object-cover pointer-events-none select-none" />
+                  </div>
+
+                  {/* Layers */}
+                  {layers.map((layer) => (
+                    <LayerComponent
+                      key={layer.id}
+                      layer={layer}
+                      scale={isMobile ? (window.innerWidth / aspectRatio.width) * 0.85 : canvasScale}
+                      isSelected={selectedLayerId === layer.id}
+                      onSelect={setSelectedLayerId}
+                      onUpdate={updateLayer}
+                      onDelete={deleteLayer}
+                      onEditStart={handleLayerEditStart}
+                    />
+                  ))}
+                </div>
+              </div>
+            )}
+          </div>
+        </div>
+
+        {/* --- DESKTOP RIGHT SIDEBAR (PROPERTIES) --- */}
+        <div className="hidden md:flex w-80 flex-col border-l border-gray-200 dark:border-gray-700 bg-white dark:bg-[#1e293b] z-20 transition-colors">
+          {renderPropertiesPanel()}
+        </div>
+
+        {/* --- MOBILE BOTTOM NAVIGATION --- */}
+        <div className="md:hidden fixed bottom-0 left-0 right-0 h-16 bg-white dark:bg-[#1e293b] border-t border-gray-200 dark:border-gray-800 flex justify-around items-center z-50 pb-safe transition-colors">
+            {[
+              { id: 'layout', icon: Layout, label: '布局' },
+              { id: 'filter', icon: Palette, label: '滤镜' },
+              { id: 'text', icon: TypeIcon, label: '文字' },
+              { id: 'sticker', icon: Smile, label: '贴纸' },
+            ].map(item => (
+              <button
+                key={item.id}
+                onClick={() => { 
+                  if (activeTab === item.id && isMobileSheetOpen) {
+                    setIsMobileSheetOpen(false); // Toggle close if clicking same
+                    setActiveTab(null);
+                  } else {
+                    setActiveTab(item.id as any); 
+                    setSelectedLayerId(null);
+                  }
+                }}
+                className={clsx(
+                  "flex flex-col items-center gap-1",
+                  activeTab === item.id ? "text-primary" : "text-gray-400 dark:text-gray-500"
+                )}
+              >
+                <item.icon size={22} />
+                <span className="text-[10px]">{item.label}</span>
+              </button>
+            ))}
+            <button 
+              onClick={() => { setSelectedLayerId(null); setActiveTab(null); setIsMobileSheetOpen(true); }} // Open background/layers
+              className={clsx(
+                "flex flex-col items-center gap-1",
+                (!activeTab && !selectedLayerId && isMobileSheetOpen) ? "text-primary" : "text-gray-400 dark:text-gray-500"
+              )}
+            >
+              <Layers size={22} />
+              <span className="text-[10px]">背景</span>
+            </button>
+        </div>
+
+        {/* --- MOBILE SHEET (TOOLS & PROPERTIES) --- */}
+        {isMobile && (
+          <div 
+            className={clsx(
+              "fixed inset-x-0 bottom-16 bg-white dark:bg-[#1e293b] border-t border-gray-200 dark:border-gray-700 z-40 transition-transform duration-300 ease-in-out rounded-t-2xl shadow-[0_-5px_20px_rgba(0,0,0,0.1)] dark:shadow-[0_-5px_20px_rgba(0,0,0,0.5)]",
+              isMobileSheetOpen ? "translate-y-0" : "translate-y-full"
+            )}
+            style={{ height: '40vh' }}
+          >
+            {/* If a layer is selected, OR activeTab is null (meaning background edit), show Property Panel */}
+            {/* If activeTab is set AND no layer selected, show Tools Panel */}
+            {(selectedLayerId || !activeTab) ? renderPropertiesPanel() : renderToolsPanel()}
+          </div>
+        )}
 
       </div>
     </div>
   );
 }
-
-// --- Sub Components ---
-
-const Header = ({ onReset, hasImage }: any) => (
-  <header className="h-16 bg-[#1f2937] border-b border-gray-700 flex items-center justify-between px-6 z-30 shadow-md">
-    <div className="flex items-center gap-3 font-bold text-xl tracking-tight">
-       <div className="w-9 h-9 rounded-xl bg-gradient-to-br from-primary to-purple-600 flex items-center justify-center shadow-lg shadow-primary/25">
-         <ImageIcon size={20} className="text-white" />
-       </div>
-       <span className="bg-gradient-to-r from-white to-gray-400 bg-clip-text text-transparent">图灵智绘</span>
-    </div>
-    <div className="flex items-center gap-4">
-      {hasImage && (
-        <button onClick={onReset} className="flex items-center gap-2 px-3 py-1.5 rounded-lg hover:bg-white/5 text-gray-400 hover:text-white transition-colors text-sm">
-           <RotateCcw size={16} /> 重置
-        </button>
-      )}
-    </div>
-  </header>
-);
-
-const ToolButton = ({ active, onClick, icon, label }: any) => (
-  <button
-    onClick={onClick}
-    className={clsx(
-      "w-14 h-14 rounded-xl flex flex-col items-center justify-center gap-1.5 transition-all duration-200",
-      active ? "bg-primary text-white shadow-lg shadow-primary/25" : "text-gray-400 hover:text-white hover:bg-gray-700"
-    )}
-  >
-    {icon}
-    <span className="text-[10px] font-medium">{label}</span>
-  </button>
-);
-
-const ActionButton = ({ onClick, icon, label, colorClass, disabled }: any) => (
-  <button
-    onClick={onClick}
-    disabled={disabled}
-    className={clsx(
-      "w-10 h-10 rounded-full flex items-center justify-center shadow-md transition-all duration-200",
-      colorClass
-    )}
-    title={label}
-  >
-    {icon}
-  </button>
-);
-
-const BackgroundPropertiesPanel = ({ config, onChange }: { config: BackgroundConfig, onChange: React.Dispatch<React.SetStateAction<BackgroundConfig>> }) => (
-  <div className="p-5 space-y-6 animate-in slide-in-from-right-4 duration-300">
-    <div className="flex items-center gap-2 pb-4 border-b border-gray-700">
-       <div className="p-2 bg-blue-500/20 rounded-lg text-blue-400"><Layout size={18}/></div>
-       <h2 className="font-bold">背景调整</h2>
-    </div>
-
-    <div className="space-y-4">
-      <div className="space-y-2">
-         <div className="flex justify-between">
-            <label className="text-xs text-gray-400">缩放 (Zoom)</label>
-            <span className="text-xs text-gray-500">{config.scale.toFixed(2)}x</span>
-         </div>
-         <input 
-           type="range" min="0.5" max="3" step="0.1"
-           value={config.scale}
-           onChange={(e) => onChange(p => ({ ...p, scale: parseFloat(e.target.value) }))}
-           className="w-full accent-primary h-1 bg-gray-700 rounded-lg appearance-none cursor-pointer"
-         />
-      </div>
-
-      <div className="space-y-2">
-         <div className="flex justify-between">
-            <label className="text-xs text-gray-400">水平位置 (X)</label>
-            <span className="text-xs text-gray-500">{config.x}px</span>
-         </div>
-         <input 
-           type="range" min="-500" max="500" step="10"
-           value={config.x}
-           onChange={(e) => onChange(p => ({ ...p, x: parseInt(e.target.value) }))}
-           className="w-full accent-primary h-1 bg-gray-700 rounded-lg appearance-none cursor-pointer"
-         />
-      </div>
-
-      <div className="space-y-2">
-         <div className="flex justify-between">
-            <label className="text-xs text-gray-400">垂直位置 (Y)</label>
-            <span className="text-xs text-gray-500">{config.y}px</span>
-         </div>
-         <input 
-           type="range" min="-500" max="500" step="10"
-           value={config.y}
-           onChange={(e) => onChange(p => ({ ...p, y: parseInt(e.target.value) }))}
-           className="w-full accent-primary h-1 bg-gray-700 rounded-lg appearance-none cursor-pointer"
-         />
-      </div>
-      
-      <div className="pt-2">
-         <button 
-           onClick={() => onChange(INITIAL_BG_CONFIG)}
-           className="text-xs text-primary hover:text-primary/80 flex items-center gap-1"
-         >
-           <RotateCcw size={12} /> 重置位置
-         </button>
-      </div>
-    </div>
-  </div>
-);
-
-const TextPropertiesPanel = ({ layer, onUpdate, onUpdateStyle, onDelete }: { layer: Layer, onUpdate: any, onUpdateStyle: any, onDelete: any }) => {
-  if (!layer.style) return null;
-
-  return (
-    <div className="p-5 space-y-6 animate-in slide-in-from-right-4 duration-300">
-      <div className="flex items-center justify-between pb-4 border-b border-gray-700">
-         <div className="flex items-center gap-2">
-            <div className="p-2 bg-purple-500/20 rounded-lg text-purple-400"><TypeIcon size={18}/></div>
-            <h2 className="font-bold">编辑文字</h2>
-         </div>
-         <button onClick={onDelete} className="p-2 hover:bg-red-500/10 text-gray-400 hover:text-red-500 rounded-lg transition-colors" title="删除">
-            <Trash2 size={16} />
-         </button>
-      </div>
-
-      <div className="space-y-4">
-        {/* Content Input */}
-        <div className="space-y-2">
-           <label className="text-xs text-gray-400 font-bold">内容</label>
-           <textarea 
-             value={layer.content}
-             onChange={(e) => onUpdate({ content: e.target.value })}
-             className="w-full bg-gray-800 border border-gray-700 rounded-lg p-3 text-sm focus:border-primary outline-none min-h-[80px] resize-none"
-             placeholder="输入文字..."
-           />
-        </div>
-
-        {/* Font Family */}
-        <div className="space-y-2">
-           <label className="text-xs text-gray-400 font-bold">字体</label>
-           <select 
-             value={layer.style.fontFamily}
-             onChange={(e) => onUpdateStyle({ fontFamily: e.target.value })}
-             className="w-full bg-gray-800 border border-gray-700 rounded-lg p-2 text-sm focus:border-primary outline-none"
-           >
-             {FONTS.map(f => <option key={f.name} value={f.value}>{f.name}</option>)}
-           </select>
-        </div>
-
-        {/* Basic Style Row */}
-        <div className="flex items-end gap-3">
-           <div className="flex-1 space-y-2">
-              <label className="text-xs text-gray-400 font-bold">颜色</label>
-              <div className="flex items-center gap-2 bg-gray-800 border border-gray-700 rounded-lg p-1.5">
-                  <input type="color" value={layer.style.color} onChange={(e) => onUpdateStyle({ color: e.target.value })} className="w-6 h-6 rounded bg-transparent border-none cursor-pointer" />
-                  <span className="text-xs uppercase text-gray-400">{layer.style.color}</span>
-              </div>
-           </div>
-           <div className="flex-1 space-y-2">
-              <label className="text-xs text-gray-400 font-bold">字号</label>
-              <input 
-                type="number" value={layer.style.fontSize} 
-                onChange={(e) => onUpdateStyle({ fontSize: parseInt(e.target.value) })}
-                className="w-full bg-gray-800 border border-gray-700 rounded-lg p-2 text-sm focus:border-primary outline-none" 
-              />
-           </div>
-        </div>
-
-        {/* Alignment & Bold */}
-        <div className="bg-gray-800 rounded-lg p-1 flex justify-between">
-           <div className="flex">
-              <StyleBtn active={layer.style.textAlign === 'left'} onClick={() => onUpdateStyle({ textAlign: 'left' })} icon={<AlignLeft size={16}/>} />
-              <StyleBtn active={layer.style.textAlign === 'center'} onClick={() => onUpdateStyle({ textAlign: 'center' })} icon={<AlignCenter size={16}/>} />
-              <StyleBtn active={layer.style.textAlign === 'right'} onClick={() => onUpdateStyle({ textAlign: 'right' })} icon={<AlignRight size={16}/>} />
-           </div>
-           <div className="w-px bg-gray-700 my-1 mx-1"></div>
-           <StyleBtn active={layer.style.fontWeight === 'bold'} onClick={() => onUpdateStyle({ fontWeight: layer.style.fontWeight === 'bold' ? 'normal' : 'bold' })} icon={<Bold size={16}/>} />
-        </div>
-
-        {/* Sliders */}
-        <div className="space-y-4 pt-2">
-            <RangeControl label="内边距" value={layer.style.padding} min={0} max={50} onChange={(v) => onUpdateStyle({ padding: v })} />
-            <RangeControl label="圆角" value={layer.style.borderRadius} min={0} max={50} onChange={(v) => onUpdateStyle({ borderRadius: v })} />
-            
-            <div className="space-y-2">
-               <label className="text-xs text-gray-400 font-bold">背景颜色</label>
-               <div className="flex items-center gap-2">
-                   <button 
-                     onClick={() => onUpdateStyle({ backgroundColor: 'rgba(0,0,0,0)' })}
-                     className={clsx("w-8 h-8 rounded border border-gray-600 flex items-center justify-center text-red-400", layer.style.backgroundColor === 'rgba(0,0,0,0)' ? 'bg-gray-700' : '')}
-                     title="清除背景"
-                   >
-                     <XIcon size={14} />
-                   </button>
-                   <input 
-                     type="color" 
-                     value={layer.style.backgroundColor === 'rgba(0,0,0,0)' ? '#000000' : layer.style.backgroundColor}
-                     onChange={(e) => onUpdateStyle({ backgroundColor: e.target.value })}
-                     className="flex-1 h-8 rounded cursor-pointer bg-transparent border-none"
-                   />
-               </div>
-            </div>
-        </div>
-
-      </div>
-    </div>
-  );
-};
-
-const StickerPropertiesPanel = ({ layer, onDelete }: { layer: Layer, onDelete: any }) => (
-   <div className="p-5 space-y-6 animate-in slide-in-from-right-4 duration-300">
-      <div className="flex items-center justify-between pb-4 border-b border-gray-700">
-         <div className="flex items-center gap-2">
-            <div className="p-2 bg-yellow-500/20 rounded-lg text-yellow-400"><Smile size={18}/></div>
-            <h2 className="font-bold">编辑贴纸</h2>
-         </div>
-         <button onClick={onDelete} className="p-2 hover:bg-red-500/10 text-gray-400 hover:text-red-500 rounded-lg transition-colors">
-            <Trash2 size={16} />
-         </button>
-      </div>
-      <div className="text-center py-8 text-gray-500 text-sm">
-         拖动角落调整贴纸大小<br/>或拖动贴纸移动位置
-      </div>
-   </div>
-);
-
-const RangeControl = ({ label, value, min, max, onChange }: any) => (
-  <div className="space-y-2">
-    <div className="flex justify-between">
-      <label className="text-xs text-gray-400 font-bold">{label}</label>
-      <span className="text-xs text-gray-500">{value}px</span>
-    </div>
-    <input 
-      type="range" min={min} max={max} 
-      value={value} 
-      onChange={(e) => onChange(parseInt(e.target.value))}
-      className="w-full accent-primary h-1 bg-gray-700 rounded-lg appearance-none cursor-pointer" 
-    />
-  </div>
-);
-
-const StyleBtn = ({ active, onClick, icon }: any) => (
-  <button 
-    onClick={onClick}
-    className={clsx(
-      "p-2 rounded transition-colors",
-      active ? "bg-primary text-white" : "text-gray-400 hover:text-white hover:bg-gray-700"
-    )}
-  >
-    {icon}
-  </button>
-);

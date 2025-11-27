@@ -1,4 +1,3 @@
-
 import React, { useRef, useState, useEffect } from 'react';
 import { Rnd } from 'react-rnd';
 import { Layer, LayerType } from '../types';
@@ -27,15 +26,26 @@ export const LayerComponent: React.FC<LayerComponentProps> = ({
   const [isEditing, setIsEditing] = useState(false);
   const [isRotating, setIsRotating] = useState(false);
   
+  // Mobile double tap detection
+  const lastTapRef = useRef<number>(0);
+  
   // Store initial values for scaling calculations
   const resizeStartData = useRef<{ width: number; height: number; fontSize: number } | null>(null);
   const rotateOffset = useRef<number>(0);
 
+  // Focus textarea when editing starts
   useEffect(() => {
     if (isEditing && textareaRef.current) {
       textareaRef.current.focus();
     }
   }, [isEditing]);
+
+  // Reset editing state if layer is deselected externally
+  useEffect(() => {
+    if (!isSelected) {
+      setIsEditing(false);
+    }
+  }, [isSelected]);
 
   // Rotation Logic
   const handleRotateStart = (e: React.MouseEvent | React.TouchEvent) => {
@@ -55,9 +65,6 @@ export const LayerComponent: React.FC<LayerComponentProps> = ({
     // Current mouse angle relative to center
     const startAngle = Math.atan2(deltaY, deltaX) * (180 / Math.PI);
     
-    // Calculate offset so rotation doesn't jump
-    // New Rotation = MouseAngle - Offset
-    // So: Offset = MouseAngle - CurrentRotation
     rotateOffset.current = startAngle - layer.rotation;
 
     setIsRotating(true);
@@ -85,13 +92,9 @@ export const LayerComponent: React.FC<LayerComponentProps> = ({
       // Apply offset
       let rotation = deg - rotateOffset.current;
       
-      // Snap to common angles
-      // Normalize rotation to -180 to 180 for easier snapping logic if needed, 
-      // but simple mod checks work too.
-      
-      // Helper to normalize angle to 0-360 for snapping checks
       const normalizedRot = (rotation % 360 + 360) % 360;
       
+      // Snap to 0, 90, 180, 270
       if (normalizedRot < 5 || normalizedRot > 355) rotation = Math.round(rotation / 360) * 360;
       else if (Math.abs(normalizedRot - 90) < 5) rotation = Math.round(rotation / 360) * 360 + 90;
       else if (Math.abs(normalizedRot - 180) < 5) rotation = Math.round(rotation / 360) * 360 + 180;
@@ -115,16 +118,34 @@ export const LayerComponent: React.FC<LayerComponentProps> = ({
     };
   }, [isRotating, layer.id, onUpdate]);
 
-  const handleMouseDown = (e: React.MouseEvent | React.TouchEvent) => {
-    e.stopPropagation();
+
+  // Handler for content selection
+  const handleContentSelect = (e: React.MouseEvent | React.TouchEvent) => {
+    // We notify selection but allow event to propagate to Rnd for dragging.
+    // However, on mobile, we might want to ensure selection happens even if drag is tiny.
     onSelect(layer.id);
   };
 
   const handleDoubleClick = (e: React.MouseEvent) => {
     if (layer.type === LayerType.TEXT) {
       e.stopPropagation();
+      e.preventDefault(); 
       setIsEditing(true);
     }
+  };
+
+  // Mobile Double Tap Handler
+  const handleTouchEnd = (e: React.TouchEvent) => {
+    const now = Date.now();
+    const DOUBLE_TAP_DELAY = 300;
+    if (now - lastTapRef.current < DOUBLE_TAP_DELAY) {
+      if (layer.type === LayerType.TEXT) {
+        e.stopPropagation();
+        e.preventDefault();
+        setIsEditing(true);
+      }
+    }
+    lastTapRef.current = now;
   };
 
   const handleBlur = () => {
@@ -137,6 +158,10 @@ export const LayerComponent: React.FC<LayerComponentProps> = ({
       position={{ x: layer.x, y: layer.y }}
       onDragStop={(e, d) => {
         onUpdate(layer.id, { x: d.x, y: d.y });
+      }}
+      // STOP PROPAGATION on click to prevent Workspace from deselecting
+      onClick={(e) => {
+         e.stopPropagation();
       }}
       onResizeStart={() => {
         if (layer.type === LayerType.TEXT && layer.style) {
@@ -180,6 +205,7 @@ export const LayerComponent: React.FC<LayerComponentProps> = ({
       minWidth={30}
       minHeight={30}
       disableDragging={isEditing || isRotating}
+      cancel=".nodrag"
       enableResizing={isSelected && !isEditing && !isRotating ? { 
         top: true, right: true, bottom: true, left: true,
         topRight: true, bottomRight: true, bottomLeft: true, topLeft: true
@@ -197,10 +223,9 @@ export const LayerComponent: React.FC<LayerComponentProps> = ({
       className={clsx(
         "absolute group",
         isSelected ? "z-50" : "z-10 hover:outline hover:outline-1 hover:outline-blue-300 hover:outline-dashed",
-        isEditing ? "cursor-text" : "touch-none"
+        isEditing ? "cursor-text" : ""
       )}
-      onMouseDown={handleMouseDown}
-      onTouchStart={handleMouseDown}
+      style={{ touchAction: 'none' }} 
     >
       {/* Wrapper Div that applies Rotation to Content + Selection UI */}
       <div className="w-full h-full relative" style={{ transform: `rotate(${layer.rotation}deg)` }}>
@@ -224,7 +249,7 @@ export const LayerComponent: React.FC<LayerComponentProps> = ({
                </>
              )}
 
-             {/* Rotation Handle - Moved to Bottom Right */}
+             {/* Rotation Handle */}
              <div 
                className="absolute -bottom-6 -right-6 w-6 h-6 bg-white border border-primary rounded-full z-20 shadow-sm flex items-center justify-center cursor-alias pointer-events-auto hover:bg-gray-50 active:bg-blue-50"
                onMouseDown={handleRotateStart}
@@ -237,6 +262,7 @@ export const LayerComponent: React.FC<LayerComponentProps> = ({
              <button
                className="absolute -top-8 -right-8 bg-red-500 text-white rounded-full p-1.5 shadow-md hover:bg-red-600 transition-colors pointer-events-auto flex items-center justify-center"
                onMouseDown={(e) => e.stopPropagation()}
+               onTouchStart={(e) => e.stopPropagation()}
                onClick={(e) => {
                  e.stopPropagation();
                  onDelete(layer.id);
@@ -250,7 +276,6 @@ export const LayerComponent: React.FC<LayerComponentProps> = ({
         <div
           ref={nodeRef}
           className="w-full h-full relative flex cursor-move select-none"
-          onDoubleClick={handleDoubleClick}
         >
           {/* Text Content Render */}
           {layer.type === LayerType.TEXT && layer.style && (
@@ -260,8 +285,12 @@ export const LayerComponent: React.FC<LayerComponentProps> = ({
                 value={layer.content}
                 onChange={(e) => onUpdate(layer.id, { content: e.target.value })}
                 onBlur={handleBlur}
+                // Stop ALL events on the textarea to allow text selection and editing without triggering drag
                 onMouseDown={(e) => e.stopPropagation()}
-                className="w-full h-full resize-none outline-none border-none overflow-hidden bg-transparent p-0 m-0"
+                onTouchStart={(e) => e.stopPropagation()}
+                onClick={(e) => e.stopPropagation()}
+                onDoubleClick={(e) => e.stopPropagation()}
+                className="nodrag w-full h-full resize-none outline-none border-none overflow-hidden bg-transparent p-0 m-0 pointer-events-auto"
                 style={{
                   fontFamily: layer.style.fontFamily,
                   fontSize: `${layer.style.fontSize}px`,
@@ -276,6 +305,10 @@ export const LayerComponent: React.FC<LayerComponentProps> = ({
               />
             ) : (
               <div
+                onMouseDown={handleContentSelect}
+                onTouchStart={handleContentSelect}
+                onDoubleClick={handleDoubleClick}
+                onTouchEnd={handleTouchEnd}
                 style={{
                   fontFamily: layer.style.fontFamily,
                   fontSize: `${layer.style.fontSize}px`,
@@ -292,23 +325,26 @@ export const LayerComponent: React.FC<LayerComponentProps> = ({
                   overflow: 'hidden', 
                   whiteSpace: 'pre-wrap',
                   wordBreak: 'break-word',
+                  pointerEvents: 'auto', // Ensure it receives clicks
                 }}
               >
-                {layer.content}
+                  {layer.content}
               </div>
             )
           )}
 
           {/* Sticker Content Render */}
           {layer.type === LayerType.STICKER && (
-            <div 
-              className="w-full h-full flex items-center justify-center" 
-              style={{ fontSize: `${Math.min(layer.width, layer.height) * 0.8}px` }} 
-            >
-               <span style={{ lineHeight: 1 }}>
-                  {layer.content}
-               </span>
-            </div>
+             <div 
+               className="w-full h-full flex items-center justify-center pointer-events-auto" 
+               style={{ fontSize: `${Math.min(layer.width, layer.height) * 0.8}px` }} 
+               onMouseDown={handleContentSelect}
+               onTouchStart={handleContentSelect}
+             >
+                <span style={{ lineHeight: 1 }}>
+                   {layer.content}
+                </span>
+             </div>
           )}
         </div>
       </div>
